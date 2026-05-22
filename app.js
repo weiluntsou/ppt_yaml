@@ -253,6 +253,241 @@ document.addEventListener("DOMContentLoaded", () => {
         return /[\u4e00-\u9fa5]/.test(str);
     }
 
+    // Parse general slide elements (background, placeholders, static shapes, static images)
+    function parseSlideElements(slideDoc, relsMap, themeColors) {
+        // 1. Background
+        let background = { type: "solid", color: "#FFFFFF" };
+        const bg = getElementByLocalName(slideDoc, null, "bg");
+        if (bg) {
+            const bgPr = getElementByLocalName(slideDoc, bg, "bgPr");
+            if (bgPr) {
+                const color = resolveColor(themeColors, bgPr);
+                if (color) {
+                    background = { type: "solid", color: color };
+                } else if (getElementByLocalName(slideDoc, bgPr, "blipFill")) {
+                    background = { type: "image_pattern" };
+                }
+            }
+        }
+
+        // 2. Placeholders & Static Shapes
+        const placeholders = [];
+        const staticShapes = [];
+        
+        const shapes = getElementsByLocalName(slideDoc, null, "sp");
+        for (const sp of shapes) {
+            const nvSpPr = getElementByLocalName(slideDoc, sp, "nvSpPr");
+            const spPr = getElementByLocalName(slideDoc, sp, "spPr");
+            const txBody = getElementByLocalName(slideDoc, sp, "txBody");
+
+            let phType = null;
+            let phIdx = null;
+            if (nvSpPr) {
+                const nvPr = getElementByLocalName(slideDoc, nvSpPr, "nvPr");
+                if (nvPr) {
+                    const ph = getElementByLocalName(slideDoc, nvPr, "ph");
+                    if (ph) {
+                        phType = ph.getAttribute("type") || "body";
+                        phIdx = ph.getAttribute("idx") || "0";
+                    }
+                }
+            }
+
+            // Extract layout coordinates
+            let layout = { x_inch: 0, y_inch: 0, width_inch: 0, height_inch: 0, rotation: 0 };
+            if (spPr) {
+                const xfrm = getElementByLocalName(slideDoc, spPr, "xfrm");
+                if (xfrm) {
+                    const off = getElementByLocalName(slideDoc, xfrm, "off");
+                    const ext = getElementByLocalName(slideDoc, xfrm, "ext");
+                    const rotVal = xfrm.getAttribute("rot");
+
+                    if (off) {
+                        const x = parseInt(off.getAttribute("x") || "0");
+                        const y = parseInt(off.getAttribute("y") || "0");
+                        layout.x_inch = parseFloat((x / 914400).toFixed(2));
+                        layout.y_inch = parseFloat((y / 914400).toFixed(2));
+                    }
+                    if (ext) {
+                        const cx = parseInt(ext.getAttribute("cx") || "0");
+                        const cy = parseInt(ext.getAttribute("cy") || "0");
+                        layout.width_inch = parseFloat((cx / 914400).toFixed(2));
+                        layout.height_inch = parseFloat((cy / 914400).toFixed(2));
+                    }
+                    if (rotVal) {
+                        layout.rotation = Math.round(parseInt(rotVal) / 60000);
+                    }
+                }
+            }
+
+            // Text style parameters if present
+            let textStyle = null;
+            if (txBody) {
+                const p = getElementByLocalName(slideDoc, txBody, "p");
+                if (p) {
+                    const r = getElementByLocalName(slideDoc, p, "r");
+                    const rPr = r ? getElementByLocalName(slideDoc, r, "rPr") : null;
+                    const pPr = getElementByLocalName(slideDoc, p, "pPr");
+                    
+                    let fontSize = null;
+                    let fontColor = null;
+                    let bold = false;
+                    let alignment = "left";
+
+                    if (rPr) {
+                        if (rPr.getAttribute("sz")) {
+                            fontSize = Math.round(parseInt(rPr.getAttribute("sz")) / 100);
+                        }
+                        bold = rPr.getAttribute("b") === "1";
+                        const c = resolveColor(themeColors, rPr);
+                        if (c) fontColor = c;
+                    }
+                    if (pPr) {
+                        const algn = pPr.getAttribute("algn");
+                        if (algn === "ctr") alignment = "center";
+                        else if (algn === "r") alignment = "right";
+                        else if (algn === "just") alignment = "justify";
+                    }
+
+                    textStyle = {
+                        font_size_pt: fontSize,
+                        color: fontColor,
+                        bold: bold,
+                        alignment: alignment
+                    };
+                }
+            }
+
+            if (phType) {
+                placeholders.push({
+                    type: phType,
+                    index: parseInt(phIdx),
+                    layout: layout,
+                    text_style: textStyle
+                });
+            } else {
+                // Static shape (e.g. background decorations)
+                let fillColor = null;
+                let borderColor = null;
+                if (spPr) {
+                    const fill = resolveColor(themeColors, spPr);
+                    if (fill) fillColor = fill;
+                    const ln = getElementByLocalName(slideDoc, spPr, "ln");
+                    if (ln) {
+                        const border = resolveColor(themeColors, ln);
+                        if (border) borderColor = border;
+                    }
+                }
+                staticShapes.push({
+                    layout: layout,
+                    fill_color: fillColor,
+                    border_color: borderColor
+                });
+            }
+        }
+
+        // 3. Pictures
+        const pictures = [];
+        const pics = getElementsByLocalName(slideDoc, null, "pic");
+        for (const pic of pics) {
+            // Check if it's a placeholder (some layouts have image placeholders)
+            const nvPicPr = getElementByLocalName(slideDoc, pic, "nvPicPr");
+            let phType = null;
+            let phIdx = null;
+            if (nvPicPr) {
+                const nvPr = getElementByLocalName(slideDoc, nvPicPr, "nvPr");
+                if (nvPr) {
+                    const ph = getElementByLocalName(slideDoc, nvPr, "ph");
+                    if (ph) {
+                        phType = ph.getAttribute("type") || "pic";
+                        phIdx = ph.getAttribute("idx") || "0";
+                    }
+                }
+            }
+
+            const cNvPr = getElementByLocalName(slideDoc, pic, "cNvPr");
+            const blip = getElementByLocalName(slideDoc, pic, "blip");
+            const xfrm = getElementByLocalName(slideDoc, pic, "xfrm");
+
+            let imgId = "";
+            let imgName = "";
+            let altText = "";
+            if (cNvPr) {
+                imgId = cNvPr.getAttribute("id") || "";
+                imgName = cNvPr.getAttribute("name") || "";
+                altText = cNvPr.getAttribute("descr") || "";
+            }
+
+            let rId = "";
+            let sourcePath = "";
+            if (blip) {
+                rId = blip.getAttribute("r:embed") || blip.getAttribute("embed") || "";
+                if (!rId) {
+                    for (let i = 0; i < blip.attributes.length; i++) {
+                        const attr = blip.attributes[i];
+                        if (attr.nodeName.endsWith("embed")) {
+                            rId = attr.nodeValue;
+                            break;
+                        }
+                    }
+                }
+                if (rId && relsMap && relsMap[rId]) {
+                    sourcePath = relsMap[rId];
+                    if (sourcePath.startsWith("../")) {
+                        sourcePath = "ppt/" + sourcePath.substring(3);
+                    }
+                }
+            }
+
+            let layout = { x_inch: 0, y_inch: 0, width_inch: 0, height_inch: 0, rotation: 0 };
+            if (xfrm) {
+                const off = getElementByLocalName(slideDoc, xfrm, "off");
+                const ext = getElementByLocalName(slideDoc, xfrm, "ext");
+                const rotVal = xfrm.getAttribute("rot");
+
+                if (off) {
+                    const x = parseInt(off.getAttribute("x") || "0");
+                    const y = parseInt(off.getAttribute("y") || "0");
+                    layout.x_inch = parseFloat((x / 914400).toFixed(2));
+                    layout.y_inch = parseFloat((y / 914400).toFixed(2));
+                }
+                if (ext) {
+                    const cx = parseInt(ext.getAttribute("cx") || "0");
+                    const cy = parseInt(ext.getAttribute("cy") || "0");
+                    layout.width_inch = parseFloat((cx / 914400).toFixed(2));
+                    layout.height_inch = parseFloat((cy / 914400).toFixed(2));
+                }
+                if (rotVal) {
+                    layout.rotation = Math.round(parseInt(rotVal) / 60000);
+                }
+            }
+
+            if (phType) {
+                placeholders.push({
+                    type: phType,
+                    index: parseInt(phIdx),
+                    layout: layout,
+                    is_image_placeholder: true
+                });
+            } else {
+                pictures.push({
+                    id: imgId,
+                    name: imgName,
+                    alt_text: altText,
+                    source_path: sourcePath,
+                    layout: layout
+                });
+            }
+        }
+
+        return {
+            background: background,
+            placeholders: placeholders,
+            static_shapes: staticShapes,
+            static_images: pictures
+        };
+    }
+
     // PPTX XML Parser Logic
     async function parsePPTX(zip) {
         const parser = new DOMParser();
@@ -641,6 +876,80 @@ document.addEventListener("DOMContentLoaded", () => {
         // Sort slide data by slide number
         slidesData.sort((a, b) => a.slide_number - b.slide_number);
 
+        // Parse Slide Masters
+        const masterFiles = zip.file(/ppt\/slideMasters\/slideMaster[0-9]+\.xml/);
+        const slideMastersData = [];
+        for (const file of masterFiles) {
+            const masterNameMatch = file.name.match(/slideMaster([0-9]+)\.xml/);
+            const masterIndex = masterNameMatch ? parseInt(masterNameMatch[1]) : 1;
+
+            let relsMap = {};
+            const relsFileName = `ppt/slideMasters/_rels/slideMaster${masterIndex}.xml.rels`;
+            const relsFile = zip.file(relsFileName);
+            if (relsFile) {
+                const relsText = await relsFile.async("text");
+                const relsDoc = parser.parseFromString(relsText, "application/xml");
+                const relationships = getElementsByLocalName(relsDoc, null, "Relationship");
+                for (const rel of relationships) {
+                    const id = rel.getAttribute("Id");
+                    const target = rel.getAttribute("Target");
+                    relsMap[id] = target;
+                }
+            }
+
+            const masterText = await file.async("text");
+            const masterDoc = parser.parseFromString(masterText, "application/xml");
+            const masterData = parseSlideElements(masterDoc, relsMap, themeColors);
+            
+            slideMastersData.push({
+                master_index: masterIndex,
+                background: masterData.background,
+                placeholders: masterData.placeholders,
+                static_shapes: masterData.static_shapes,
+                static_images: masterData.static_images
+            });
+        }
+        slideMastersData.sort((a, b) => a.master_index - b.master_index);
+
+        // Parse Slide Layouts
+        const layoutFiles = zip.file(/ppt\/slideLayouts\/slideLayout[0-9]+\.xml/);
+        const slideLayoutsData = [];
+        for (const file of layoutFiles) {
+            const layoutNameMatch = file.name.match(/slideLayout([0-9]+)\.xml/);
+            const layoutIndex = layoutNameMatch ? parseInt(layoutNameMatch[1]) : 1;
+
+            let relsMap = {};
+            const relsFileName = `ppt/slideLayouts/_rels/slideLayout${layoutIndex}.xml.rels`;
+            const relsFile = zip.file(relsFileName);
+            if (relsFile) {
+                const relsText = await relsFile.async("text");
+                const relsDoc = parser.parseFromString(relsText, "application/xml");
+                const relationships = getElementsByLocalName(relsDoc, null, "Relationship");
+                for (const rel of relationships) {
+                    const id = rel.getAttribute("Id");
+                    const target = rel.getAttribute("Target");
+                    relsMap[id] = target;
+                }
+            }
+
+            const layoutText = await file.async("text");
+            const layoutDoc = parser.parseFromString(layoutText, "application/xml");
+            const layoutData = parseSlideElements(layoutDoc, relsMap, themeColors);
+
+            const sldLayoutNode = getElementByLocalName(layoutDoc, null, "sldLayout");
+            const layoutName = sldLayoutNode ? (sldLayoutNode.getAttribute("name") || `Layout ${layoutIndex}`) : `Layout ${layoutIndex}`;
+
+            slideLayoutsData.push({
+                layout_index: layoutIndex,
+                name: layoutName,
+                background: layoutData.background,
+                placeholders: layoutData.placeholders,
+                static_shapes: layoutData.static_shapes,
+                static_images: layoutData.static_images
+            });
+        }
+        slideLayoutsData.sort((a, b) => a.layout_index - b.layout_index);
+
         // Deduce dominant style for each category
         const typographyFinal = {};
         for (const category of Object.keys(typographyStats)) {
@@ -785,7 +1094,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 },
                 image_count: imageCount
             },
-            slides: slidesData
+            slides: slidesData,
+            slide_masters: slideMastersData,
+            slide_layouts: slideLayoutsData
         };
 
         currentYamlObj = yamlObj;
