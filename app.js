@@ -393,9 +393,30 @@ document.addEventListener("DOMContentLoaded", () => {
             caption: {}
         };
 
+        const slidesData = [];
+
         for (const file of slideFiles) {
             const slideText = await file.async("text");
             const slideDoc = parser.parseFromString(slideText, "application/xml");
+
+            // Get slide index
+            const slideNameMatch = file.name.match(/slide([0-9]+)\.xml/);
+            const slideIndex = slideNameMatch ? parseInt(slideNameMatch[1]) : 0;
+
+            // Load relationship file for resolving image target paths
+            let relsMap = {};
+            const relsFileName = `ppt/slides/_rels/slide${slideIndex}.xml.rels`;
+            const relsFile = zip.file(relsFileName);
+            if (relsFile) {
+                const relsText = await relsFile.async("text");
+                const relsDoc = parser.parseFromString(relsText, "application/xml");
+                const relationships = getElementsByLocalName(relsDoc, null, "Relationship");
+                for (const rel of relationships) {
+                    const id = rel.getAttribute("Id");
+                    const target = rel.getAttribute("Target");
+                    relsMap[id] = target;
+                }
+            }
 
             // Look for Background
             const bg = getElementByLocalName(slideDoc, null, "bg");
@@ -533,7 +554,92 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 }
             }
+
+            // Extract pictures on this slide
+            const pics = getElementsByLocalName(slideDoc, null, "pic");
+            const slideImages = [];
+            for (const pic of pics) {
+                const cNvPr = getElementByLocalName(slideDoc, pic, "cNvPr");
+                const blip = getElementByLocalName(slideDoc, pic, "blip");
+                const xfrm = getElementByLocalName(slideDoc, pic, "xfrm");
+
+                let imgId = "";
+                let imgName = "";
+                let altText = "";
+                if (cNvPr) {
+                    imgId = cNvPr.getAttribute("id") || "";
+                    imgName = cNvPr.getAttribute("name") || "";
+                    altText = cNvPr.getAttribute("descr") || "";
+                }
+
+                let rId = "";
+                let sourcePath = "";
+                if (blip) {
+                    rId = blip.getAttribute("r:embed") || blip.getAttribute("embed") || "";
+                    if (!rId) {
+                        for (let i = 0; i < blip.attributes.length; i++) {
+                            const attr = blip.attributes[i];
+                            if (attr.nodeName.endsWith("embed")) {
+                                rId = attr.nodeValue;
+                                break;
+                            }
+                        }
+                    }
+                    if (rId && relsMap[rId]) {
+                        sourcePath = relsMap[rId];
+                        if (sourcePath.startsWith("../")) {
+                            sourcePath = "ppt/" + sourcePath.substring(3);
+                        }
+                    }
+                }
+
+                let layout = {
+                    x_inch: 0,
+                    y_inch: 0,
+                    width_inch: 0,
+                    height_inch: 0,
+                    rotation: 0
+                };
+
+                if (xfrm) {
+                    const off = getElementByLocalName(slideDoc, xfrm, "off");
+                    const ext = getElementByLocalName(slideDoc, xfrm, "ext");
+                    const rotVal = xfrm.getAttribute("rot");
+
+                    if (off) {
+                        const x = parseInt(off.getAttribute("x") || "0");
+                        const y = parseInt(off.getAttribute("y") || "0");
+                        layout.x_inch = parseFloat((x / 914400).toFixed(2));
+                        layout.y_inch = parseFloat((y / 914400).toFixed(2));
+                    }
+                    if (ext) {
+                        const cx = parseInt(ext.getAttribute("cx") || "0");
+                        const cy = parseInt(ext.getAttribute("cy") || "0");
+                        layout.width_inch = parseFloat((cx / 914400).toFixed(2));
+                        layout.height_inch = parseFloat((cy / 914400).toFixed(2));
+                    }
+                    if (rotVal) {
+                        layout.rotation = Math.round(parseInt(rotVal) / 60000);
+                    }
+                }
+
+                slideImages.push({
+                    id: imgId,
+                    name: imgName,
+                    alt_text: altText,
+                    source_path: sourcePath,
+                    layout: layout
+                });
+            }
+
+            slidesData.push({
+                slide_number: slideIndex,
+                images: slideImages
+            });
         }
+
+        // Sort slide data by slide number
+        slidesData.sort((a, b) => a.slide_number - b.slide_number);
 
         // Deduce dominant style for each category
         const typographyFinal = {};
@@ -678,7 +784,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     border_colors: Array.from(shapeBorders)
                 },
                 image_count: imageCount
-            }
+            },
+            slides: slidesData
         };
 
         currentYamlObj = yamlObj;
