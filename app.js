@@ -254,9 +254,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Parse general slide elements (background, placeholders, static shapes, static images)
-    function parseSlideElements(slideDoc, relsMap, themeColors) {
-        // 1. Background
-        let background = { type: "solid", color: "#FFFFFF" };
+    function parseSlideElements(slideDoc, relsMap, themeColors, themeFonts) {
+        // 1. Background (returns null if not explicitly set, allowing inheritance checks)
+        let background = null;
         const bg = getElementByLocalName(slideDoc, null, "bg");
         if (bg) {
             const bgPr = getElementByLocalName(slideDoc, bg, "bgPr");
@@ -270,28 +270,26 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
-        // 2. Placeholders & Static Shapes
+        // 2. Placeholders & Static Shapes (sp and cxnSp for connector lines)
         const placeholders = [];
         const staticShapes = [];
         
-        const shapes = getElementsByLocalName(slideDoc, null, "sp");
-        for (const sp of shapes) {
-            const nvSpPr = getElementByLocalName(slideDoc, sp, "nvSpPr");
-            const spPr = getElementByLocalName(slideDoc, sp, "spPr");
-            const txBody = getElementByLocalName(slideDoc, sp, "txBody");
+        const shapes = [
+            ...getElementsByLocalName(slideDoc, null, "sp"),
+            ...getElementsByLocalName(slideDoc, null, "cxnSp")
+        ];
 
+        for (const sp of shapes) {
             let phType = null;
             let phIdx = null;
-            if (nvSpPr) {
-                const nvPr = getElementByLocalName(slideDoc, nvSpPr, "nvPr");
-                if (nvPr) {
-                    const ph = getElementByLocalName(slideDoc, nvPr, "ph");
-                    if (ph) {
-                        phType = ph.getAttribute("type") || "body";
-                        phIdx = ph.getAttribute("idx") || "0";
-                    }
-                }
+            const ph = getElementByLocalName(slideDoc, sp, "ph");
+            if (ph) {
+                phType = ph.getAttribute("type") || "body";
+                phIdx = ph.getAttribute("idx") || "0";
             }
+
+            const spPr = getElementByLocalName(slideDoc, sp, "spPr");
+            const txBody = getElementByLocalName(slideDoc, sp, "txBody");
 
             // Extract layout coordinates
             let layout = { x_inch: 0, y_inch: 0, width_inch: 0, height_inch: 0, rotation: 0 };
@@ -333,6 +331,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     let fontColor = null;
                     let bold = false;
                     let alignment = "left";
+                    let fontLatin = null;
+                    let fontEa = null;
 
                     if (rPr) {
                         if (rPr.getAttribute("sz")) {
@@ -341,6 +341,12 @@ document.addEventListener("DOMContentLoaded", () => {
                         bold = rPr.getAttribute("b") === "1";
                         const c = resolveColor(themeColors, rPr);
                         if (c) fontColor = c;
+
+                        const latin = getElementByLocalName(slideDoc, rPr, "latin");
+                        if (latin) fontLatin = latin.getAttribute("typeface");
+
+                        const ea = getElementByLocalName(slideDoc, rPr, "ea");
+                        if (ea) fontEa = ea.getAttribute("typeface");
                     }
                     if (pPr) {
                         const algn = pPr.getAttribute("algn");
@@ -353,7 +359,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         font_size_pt: fontSize,
                         color: fontColor,
                         bold: bold,
-                        alignment: alignment
+                        alignment: alignment,
+                        font_latin: fontLatin || (themeFonts ? themeFonts.minor.latin : null),
+                        font_east_asian: fontEa || (themeFonts ? themeFonts.minor.ea : null)
                     };
                 }
             }
@@ -366,22 +374,38 @@ document.addEventListener("DOMContentLoaded", () => {
                     text_style: textStyle
                 });
             } else {
-                // Static shape (e.g. background decorations)
+                // Static shape (e.g. background decorations, colored panels, decorative lines)
                 let fillColor = null;
                 let borderColor = null;
+                let borderWidthPt = null;
+                let shapeType = "rect"; // default fallback
+
                 if (spPr) {
                     const fill = resolveColor(themeColors, spPr);
                     if (fill) fillColor = fill;
+                    
                     const ln = getElementByLocalName(slideDoc, spPr, "ln");
                     if (ln) {
                         const border = resolveColor(themeColors, ln);
                         if (border) borderColor = border;
+                        const wAttr = ln.getAttribute("w");
+                        if (wAttr) {
+                            borderWidthPt = parseFloat((parseInt(wAttr) / 12700).toFixed(1));
+                        }
+                    }
+
+                    const prstGeom = getElementByLocalName(slideDoc, spPr, "prstGeom");
+                    if (prstGeom) {
+                        shapeType = prstGeom.getAttribute("prst") || "rect";
                     }
                 }
+                
                 staticShapes.push({
+                    shape_type: shapeType,
                     layout: layout,
                     fill_color: fillColor,
-                    border_color: borderColor
+                    border_color: borderColor,
+                    border_width_pt: borderWidthPt
                 });
             }
         }
@@ -390,19 +414,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const pictures = [];
         const pics = getElementsByLocalName(slideDoc, null, "pic");
         for (const pic of pics) {
-            // Check if it's a placeholder (some layouts have image placeholders)
-            const nvPicPr = getElementByLocalName(slideDoc, pic, "nvPicPr");
             let phType = null;
             let phIdx = null;
-            if (nvPicPr) {
-                const nvPr = getElementByLocalName(slideDoc, nvPicPr, "nvPr");
-                if (nvPr) {
-                    const ph = getElementByLocalName(slideDoc, nvPr, "ph");
-                    if (ph) {
-                        phType = ph.getAttribute("type") || "pic";
-                        phIdx = ph.getAttribute("idx") || "0";
-                    }
-                }
+            const ph = getElementByLocalName(slideDoc, pic, "ph");
+            if (ph) {
+                phType = ph.getAttribute("type") || "pic";
+                phIdx = ph.getAttribute("idx") || "0";
             }
 
             const cNvPr = getElementByLocalName(slideDoc, pic, "cNvPr");
@@ -899,11 +916,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const masterText = await file.async("text");
             const masterDoc = parser.parseFromString(masterText, "application/xml");
-            const masterData = parseSlideElements(masterDoc, relsMap, themeColors);
+            const masterData = parseSlideElements(masterDoc, relsMap, themeColors, themeFonts);
             
             slideMastersData.push({
                 master_index: masterIndex,
-                background: masterData.background,
+                background: masterData.background || { type: "solid", color: "#FFFFFF" },
                 placeholders: masterData.placeholders,
                 static_shapes: masterData.static_shapes,
                 static_images: masterData.static_images
@@ -919,6 +936,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const layoutIndex = layoutNameMatch ? parseInt(layoutNameMatch[1]) : 1;
 
             let relsMap = {};
+            let masterIndex = null;
             const relsFileName = `ppt/slideLayouts/_rels/slideLayout${layoutIndex}.xml.rels`;
             const relsFile = zip.file(relsFileName);
             if (relsFile) {
@@ -929,12 +947,20 @@ document.addEventListener("DOMContentLoaded", () => {
                     const id = rel.getAttribute("Id");
                     const target = rel.getAttribute("Target");
                     relsMap[id] = target;
+
+                    const type = rel.getAttribute("Type");
+                    if ((type && type.endsWith("/slideMaster")) || (target && target.includes("slideMaster"))) {
+                        const match = target.match(/slideMaster([0-9]+)\.xml/);
+                        if (match) {
+                            masterIndex = parseInt(match[1]);
+                        }
+                    }
                 }
             }
 
             const layoutText = await file.async("text");
             const layoutDoc = parser.parseFromString(layoutText, "application/xml");
-            const layoutData = parseSlideElements(layoutDoc, relsMap, themeColors);
+            const layoutData = parseSlideElements(layoutDoc, relsMap, themeColors, themeFonts);
 
             const sldLayoutNode = getElementByLocalName(layoutDoc, null, "sldLayout");
             const layoutName = sldLayoutNode ? (sldLayoutNode.getAttribute("name") || `Layout ${layoutIndex}`) : `Layout ${layoutIndex}`;
@@ -942,7 +968,8 @@ document.addEventListener("DOMContentLoaded", () => {
             slideLayoutsData.push({
                 layout_index: layoutIndex,
                 name: layoutName,
-                background: layoutData.background,
+                master_index: masterIndex,
+                background: layoutData.background || { type: "inherited" },
                 placeholders: layoutData.placeholders,
                 static_shapes: layoutData.static_shapes,
                 static_images: layoutData.static_images
