@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PPTX Style Extractor | 簡報風格描述產生器</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Style -->
+    <link rel="stylesheet" href="style.css">
+    <!-- JSZip (for extracting PPTX) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- JS-YAML (for object to YAML conversion) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-logo">
+                <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="logo-icon">
+                    <polyline points="16 16 20 20 24 16"></polyline>
+                    <line x1="20" y1="20" x2="20" y2="8"></line>
+                    <rect x="2" y="3" width="14" height="18" rx="2" ry="2"></rect>
+                    <line x1="6" y1="8" x2="12" y2="8"></line>
+                    <line x1="6" y1="12" x2="12" y2="12"></line>
+                </svg>
+                <h1>PPTX Style Extractor</h1>
+            </div>
+            <div class="header-badge">
+                <span class="badge-dot"></span>
+                <span>100% 本地運行 • 無資料上傳</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="app-main">
+            <!-- File Upload Drop Zone (Initial State) -->
+            <section id="drop-zone" class="drop-zone">
+                <input type="file" id="file-input" accept=".pptx" style="display: none;">
+                <div class="drop-zone-content">
+                    <div class="upload-icon-container">
+                        <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="upload-icon">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                    </div>
+                    <h2>將 PPTX 簡報拖曳至此處</h2>
+                    <p>或者點擊此處選擇您電腦中的檔案</p>
+                    <span class="file-limits">支援標準 .pptx 格式簡報檔</span>
+                </div>
+            </section>
+
+            <!-- Dashboard Area (Visible after loading a file) -->
+            <section id="dashboard" class="dashboard hidden">
+                <!-- Top Actions Bar -->
+                <div class="dashboard-actions">
+                    <button id="btn-reupload" class="btn btn-secondary">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                        </svg>
+                        重新上傳
+                    </button>
+                    <div class="file-name-display">
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        <span id="current-filename">presentation.pptx</span>
+                    </div>
+                </div>
+
+                <!-- Dashboard Grid -->
+                <div class="dashboard-grid">
+                    <!-- Left: Extracted Details -->
+                    <div class="info-panel">
+                        <!-- Overview Card -->
+                        <div class="card card-overview">
+                            <h3 class="card-title">
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                簡報概觀 (Overview)
+                            </h3>
+                            <div class="overview-grid">
+                                <div class="metric-item">
+                                    <span class="metric-label">投影片頁數</span>
+                                    <span id="meta-slides" class="metric-value">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">螢幕比例</span>
+                                    <span id="meta-ratio" class="metric-value">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">尺寸 (像素)</span>
+                                    <span id="meta-px" class="metric-value">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">尺寸 (英吋)</span>
+                                    <span id="meta-inches" class="metric-value">-</span>
+                                </div>
+                            </div>
+                            <div class="metadata-list">
+                                <div class="meta-row">
+                                    <span class="meta-key">建立者:</span>
+                                    <span id="meta-creator" class="meta-val">-</span>
+                                </div>
+                                <div class="meta-row">
+                                    <span class="meta-key">建立時間:</span>
+                                    <span id="meta-created" class="meta-val">-</span>
+                                </div>
+                                <div class="meta-row">
+                                    <span class="meta-key">最後修改:</span>
+                                    <span id="meta-modified" class="meta-val">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Colors Card -->
+                        <div class="card card-colors">
+                            <h3 class="card-title">
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 14.7255 3.09032 17.1962 4.85857 19C5.32673 19.4682 5.34091 20.2197 4.90807 20.7061C4.5404 21.1203 3.9056 21.0823 3.58569 20.6253C1.6118 17.8087 1 14.5 1 12C1 5.92487 5.92487 1 12 1C18.0751 1 23 5.92487 23 12C23 18.0751 18.0751 23 12 23C10.5 23 9 22 9 20.5C9 19.5 9.5 19 9.5 18C9.5 17 8.5 16 7.5 16C6.5 16 2.5 18 2.5 19C2.5 20 4.5 22 6 22H12Z"></path></svg>
+                                佈景顏色 (Theme Colors)
+                            </h3>
+                            <div class="colors-container">
+                                <div class="color-section-title">主要配色</div>
+                                <div class="colors-grid" id="main-colors-grid">
+                                    <!-- Dynamic content -->
+                                </div>
+                                <div class="color-section-title">輔助與超連結配色</div>
+                                <div class="colors-grid" id="accent-colors-grid">
+                                    <!-- Dynamic content -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Fonts Card -->
+                        <div class="card card-fonts">
+                            <h3 class="card-title">
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+                                佈景字型 (Theme Fonts)
+                            </h3>
+                            <div class="fonts-grid">
+                                <div class="font-item">
+                                    <div class="font-header">標題字型 (Major)</div>
+                                    <div class="font-lang-row">
+                                        <span class="font-lang">英文/拉丁:</span>
+                                        <span id="font-major-latin" class="font-name">-</span>
+                                    </div>
+                                    <div class="font-lang-row">
+                                        <span class="font-lang">中文字型:</span>
+                                        <span id="font-major-ea" class="font-name">-</span>
+                                    </div>
+                                </div>
+                                <div class="font-item">
+                                    <div class="font-header">本文字型 (Minor)</div>
+                                    <div class="font-lang-row">
+                                        <span class="font-lang">英文/拉丁:</span>
+                                        <span id="font-minor-latin" class="font-name">-</span>
+                                    </div>
+                                    <div class="font-lang-row">
+                                        <span class="font-lang">中文字型:</span>
+                                        <span id="font-minor-ea" class="font-name">-</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Typography Card -->
+                        <div class="card card-typography">
+                            <h3 class="card-title">
+                                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                內文樣式分析 (Inferred Styles)
+                            </h3>
+                            <div class="typography-list" id="inferred-styles-list">
+                                <!-- Dynamic inferred text styles -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: YAML Output & Action -->
+                    <div class="yaml-panel">
+                        <div class="card card-yaml">
+                            <div class="yaml-header">
+                                <div class="yaml-title-group">
+                                    <span class="yaml-badge">YAML</span>
+                                    <h3>風格描述檔</h3>
+                                </div>
+                                <div class="yaml-actions">
+                                    <button id="btn-copy" class="btn btn-sm btn-icon" title="複製 YAML">
+                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                        複製
+                                    </button>
+                                    <button id="btn-download" class="btn btn-primary btn-sm">
+                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                            <polyline points="7 10 12 15 17 10"></polyline>
+                                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                                        </svg>
+                                        下載描述檔
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="yaml-editor-container">
+                                <pre id="yaml-output-pre"><code id="yaml-output" class="language-yaml"># 正在等待簡報載入...</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Toast Notification -->
+        <div id="toast" class="toast hidden">複製成功！</div>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>Antigravity PPTX Style Extractor © 2026. 所有的運算都在您的瀏覽器端沙盒中獨立進行，絕不傳輸任何文件或內容至外部伺服器。</p>
+        </footer>
+    </div>
+
+    <!-- Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
